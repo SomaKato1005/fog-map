@@ -323,7 +323,7 @@
   </div>
   <div id="user-avatar-wrap">
     <div id="user-avatar-placeholder" onclick="toggleMenu()">
-      {{ (user.display_name or user.username)[0] | upper }}
+      {{ ((user.display_name or user.username or '?') | first) | upper }}
     </div>
     <div id="user-menu">
       <div class="menu-name">{{ user.display_name or user.username }}</div>
