@@ -22,7 +22,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__,
+            template_folder=os.path.join(BASE_DIR, "templates"),
+            static_folder=os.path.join(BASE_DIR, "static"))
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///fogmap.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
