@@ -1,8 +1,8 @@
 """
 霧の地図 - Fog of War Map Application
-- ユーザー名 + パスワード認証（ドメイン・HTTPS不要）
-- ユーザーごとにピン・探索済みエリア・写真を分離
-- SQLite で永続化、写真はディスク保存
+- ユーザー名 + パスワード認証
+- Supabase (PostgreSQL) でDB永続化
+- Cloudinary で写真永続化
 """
 
 import os
@@ -13,6 +13,8 @@ import secrets
 from datetime import datetime
 from functools import wraps
 
+import cloudinary
+import cloudinary.uploader
 from flask import (
     Flask, render_template, request, jsonify,
     redirect, url_for, session, g, send_from_directory
@@ -27,12 +29,22 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, "templates"),
             static_folder=os.path.join(BASE_DIR, "static"))
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///fogmap.db")
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# ── DB (Supabase / SQLite fallback) ──────
+_db_url = os.environ.get("DATABASE_URL", "sqlite:///fogmap.db")
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_DATABASE_URI"] = _db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
+
+# ── Cloudinary ────────────────────────────
+cloudinary.config(
+    cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key    = os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET"),
+    secure     = True,
+)
 
 db = SQLAlchemy(app)
 
@@ -78,28 +90,30 @@ class ExploredSpot(db.Model):
 
 class Photo(db.Model):
     __tablename__ = "photos"
-    id             = db.Column(db.String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id        = db.Column(db.String(64), db.ForeignKey("users.id"), nullable=False)
-    lat            = db.Column(db.Float, nullable=False)
-    lng            = db.Column(db.Float, nullable=False)
-    filename       = db.Column(db.String(256), nullable=False)
-    thumb_filename = db.Column(db.String(256), nullable=True)
-    note           = db.Column(db.Text, default="")
-    taken_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    id              = db.Column(db.String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id         = db.Column(db.String(64), db.ForeignKey("users.id"), nullable=False)
+    lat             = db.Column(db.Float, nullable=False)
+    lng             = db.Column(db.Float, nullable=False)
+    # Cloudinaryの公開URL・public_idを保存
+    image_url       = db.Column(db.Text, nullable=False)
+    thumb_url       = db.Column(db.Text, nullable=True)
+    cloudinary_id   = db.Column(db.String(256), nullable=True)  # 削除時に使用
+    note            = db.Column(db.Text, default="")
+    taken_at        = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
             "id":        self.id,
             "lat":       self.lat,
             "lng":       self.lng,
-            "url":       f"/uploads/{self.filename}",
-            "thumb_url": f"/uploads/{self.thumb_filename}" if self.thumb_filename else f"/uploads/{self.filename}",
+            "url":       self.image_url,
+            "thumb_url": self.thumb_url or self.image_url,
             "note":      self.note,
             "taken_at":  self.taken_at.isoformat(),
         }
 
 # ─────────────────────────────────────────
-#  パスワードのハッシュ化（標準ライブラリのみ）
+#  パスワードのハッシュ化
 # ─────────────────────────────────────────
 
 def hash_password(password: str, salt: str = None):
@@ -142,7 +156,6 @@ def index():
         return render_template("login.html", error=None)
     user = db.session.get(User, session["user_id"])
     if user is None:
-        # DBが消えた・セッションが古い場合はログアウト扱い
         session.clear()
         return render_template("login.html", error="セッションが切れました。再度ログインしてください。")
     return render_template("index.html", user=user)
@@ -186,17 +199,6 @@ def register():
 def logout():
     session.clear()
     return redirect(url_for("index"))
-
-# ─────────────────────────────────────────
-#  ROUTES — ファイル配信
-# ─────────────────────────────────────────
-
-@app.route("/uploads/<path:filename>")
-@login_required
-def serve_upload(filename):
-    if not filename.startswith(g.user.id + "_"):
-        return "forbidden", 403
-    return send_from_directory(UPLOAD_DIR, filename)
 
 # ─────────────────────────────────────────
 #  ROUTES — Pins
@@ -254,7 +256,7 @@ def add_spots():
     return jsonify({"ok": True, "count": len(data)})
 
 # ─────────────────────────────────────────
-#  ROUTES — Photos
+#  ROUTES — Photos (Cloudinary)
 # ─────────────────────────────────────────
 
 @app.route("/api/photos", methods=["GET"])
@@ -271,41 +273,40 @@ def upload_photo():
     lng        = data.get("lng")
     note       = data.get("note", "")
     img_data   = data.get("image", "")
-    thumb_data = data.get("thumb", "")
 
     if not img_data or lat is None or lng is None:
         return jsonify({"error": "lat/lng/image required"}), 400
 
-    def decode_b64(raw):
-        if "," in raw:
-            raw = raw.split(",", 1)[1]
-        return base64.b64decode(raw)
-
+    # Cloudinaryにアップロード
     try:
-        image_bytes = decode_b64(img_data)
-    except Exception:
-        return jsonify({"error": "invalid image data"}), 400
+        folder    = f"fogmap/{g.user.id}"
+        public_id = f"{folder}/{uuid.uuid4()}"
 
-    uid    = str(uuid.uuid4())
-    prefix = g.user.id + "_"
+        # フル画像アップロード
+        result = cloudinary.uploader.upload(
+            img_data,
+            public_id    = public_id,
+            resource_type= "image",
+            format       = "jpg",
+            quality      = "auto:good",
+        )
+        image_url = result["secure_url"]
+        cloudinary_id = result["public_id"]
 
-    filename = f"{prefix}{uid}.jpg"
-    with open(os.path.join(UPLOAD_DIR, filename), "wb") as f:
-        f.write(image_bytes)
+        # サムネイルURLはCloudinaryのURL変換で生成（アップロード不要）
+        thumb_url = cloudinary.utils.cloudinary_url(
+            cloudinary_id,
+            width=320, height=320,
+            crop="fill", quality="auto:low", format="jpg"
+        )[0]
 
-    thumb_filename = None
-    if thumb_data:
-        try:
-            thumb_bytes    = decode_b64(thumb_data)
-            thumb_filename = f"{prefix}{uid}_thumb.jpg"
-            with open(os.path.join(UPLOAD_DIR, thumb_filename), "wb") as f:
-                f.write(thumb_bytes)
-        except Exception:
-            thumb_filename = None
+    except Exception as e:
+        return jsonify({"error": f"Cloudinaryアップロード失敗: {str(e)}"}), 500
 
     photo = Photo(
         user_id=g.user.id, lat=lat, lng=lng,
-        filename=filename, thumb_filename=thumb_filename, note=note,
+        image_url=image_url, thumb_url=thumb_url,
+        cloudinary_id=cloudinary_id, note=note,
     )
     db.session.add(photo); db.session.commit()
     return jsonify(photo.to_dict()), 201
@@ -314,12 +315,12 @@ def upload_photo():
 @login_required
 def delete_photo(photo_id):
     photo = Photo.query.filter_by(id=photo_id, user_id=g.user.id).first_or_404()
-    for fname in [photo.filename, photo.thumb_filename]:
-        if fname:
-            try:
-                os.remove(os.path.join(UPLOAD_DIR, fname))
-            except FileNotFoundError:
-                pass
+    # Cloudinaryから削除
+    if photo.cloudinary_id:
+        try:
+            cloudinary.uploader.destroy(photo.cloudinary_id)
+        except Exception:
+            pass
     db.session.delete(photo); db.session.commit()
     return jsonify({"ok": True})
 
