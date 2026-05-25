@@ -743,10 +743,17 @@ function addPhotoMarker(photo) {
 }
 
 function renderPhotoGrid() {
-  const grid = document.getElementById('photos-grid');
+  const list = document.getElementById('photos-list');
+  // photos-grid が消えている場合に備えて毎回作り直す
   if (!photos.length) {
-    document.getElementById('photos-list').innerHTML = `<div id="no-items">まだ写真がありません。<br>「撮影」モードで地図をタップして撮影を。</div>`;
+    list.innerHTML = `<div id="no-items">まだ写真がありません。<br>「撮影」モードで地図をタップして撮影を。</div>`;
     return;
+  }
+  // photos-grid を確実に存在させてから中身を更新
+  let grid = document.getElementById('photos-grid');
+  if (!grid) {
+    list.innerHTML = '<div id="photos-grid"></div>';
+    grid = document.getElementById('photos-grid');
   }
   grid.innerHTML = photos.map(p=>`
     <div class="photo-thumb-item" onclick="openViewer('${p.id}')">
@@ -896,14 +903,16 @@ async function savePhoto() {
     const photo = await r.json();
     addPhotoMarker(photo);
     photos.unshift(photo);
-    renderPhotoGrid();
     hideToast();
     closeCameraModal();
     map.flyTo([lat, lng], 18, { duration: 0.8 });
   } catch(e) {
     hideToast();
     alert('保存に失敗しました: ' + e.message);
+    return;
   }
+  // 保存成功後にグリッドを更新（tryの外で実行してエラーが混ざらないようにする）
+  renderPhotoGrid();
 }
 
 function closeCameraModal() {
