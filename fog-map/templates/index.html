@@ -35,9 +35,8 @@
 
     /* ── FOG ── */
     #fog-canvas {
-      position: fixed; top: 0; left: 0;
-      width: 100vw; height: 100vh;
-      pointer-events: none; z-index: 450;
+      /* LeafletのfogPane内に配置するためCSSで位置制御しない */
+      pointer-events: none;
     }
 
     /* ── HEADER ── */
@@ -497,16 +496,24 @@ function initMap() {
   }).addTo(map);
   map.setView([35.4437, 139.6380], 17);
 
-  // 霧用カスタムPane（z-index 450: タイル(200)より上、マーカー(600)より下）
+  // 霧用カスタムPane（markerPane=600より下、tilePane=200より上）
   map.createPane('fogPane');
-  map.getPane('fogPane').style.zIndex = 450;
+  map.getPane('fogPane').style.zIndex = 350;
   map.getPane('fogPane').style.pointerEvents = 'none';
 
-  // fog-canvasをLeafletのfogPane内に移動（地図と一緒にスクロール追従させない）
-  // canvasは固定オーバーレイのまま、ただしz-indexをpaneと合わせる
+  // fog-canvasをfogPane内に物理的に移動
+  // → LeafletのmarkerPane(z:600)が自動的に霧の上に来る
   fogCanvas = document.getElementById('fog-canvas');
-  fogCanvas.style.zIndex = 450;
-  fogCtx    = fogCanvas.getContext('2d');
+  map.getPane('fogPane').appendChild(fogCanvas);
+
+  // canvasをLeafletコンテナに合わせてフルサイズに
+  const mapContainer = map.getContainer();
+  fogCanvas.style.position = 'absolute';
+  fogCanvas.style.top = '0';
+  fogCanvas.style.left = '0';
+  fogCanvas.style.width = '100%';
+  fogCanvas.style.height = '100%';
+  fogCtx = fogCanvas.getContext('2d');
   resizeFog();
   map.on('move zoom', drawFog);
   window.addEventListener('resize', () => { resizeFog(); drawFog(); });
@@ -569,7 +576,11 @@ function updatePositionMarker(lat, lng) {
 // ══════════════════════════════════════════
 //  FOG
 // ══════════════════════════════════════════
-function resizeFog() { fogCanvas.width = window.innerWidth; fogCanvas.height = window.innerHeight; }
+function resizeFog() {
+  const container = map.getContainer();
+  fogCanvas.width  = container.offsetWidth;
+  fogCanvas.height = container.offsetHeight;
+}
 function ll2px(lat, lng) { const p = map.latLngToContainerPoint([lat, lng]); return { x:p.x, y:p.y }; }
 function m2px(m) {
   const lat = currentPos ? currentPos.lat : map.getCenter().lat;
