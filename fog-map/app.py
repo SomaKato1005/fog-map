@@ -141,6 +141,10 @@ def index():
     if "user_id" not in session:
         return render_template("login.html", error=None)
     user = db.session.get(User, session["user_id"])
+    if user is None:
+        # DBが消えた・セッションが古い場合はログアウト扱い
+        session.clear()
+        return render_template("login.html", error="セッションが切れました。再度ログインしてください。")
     return render_template("index.html", user=user)
 
 @app.route("/login", methods=["POST"])
