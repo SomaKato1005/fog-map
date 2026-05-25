@@ -1,0 +1,1859 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>霧の地図</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap");
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      :root {
+        --ink: #1a1a1a;
+        --ink-soft: #4a4a4a;
+        --parchment: #f5f0e8;
+        --parchment-dark: #e8e0cc;
+        --accent: #8b5e3c;
+        --accent-light: #c49a6c;
+        --pin-red: #c0392b;
+        --ui-bg: rgba(250, 247, 240, 0.96);
+        --border: rgba(139, 94, 60, 0.25);
+        --fog-color: rgba(68, 68, 68, 0.92);
+      }
+      html,
+      body {
+        font-family: "Noto Sans JP", sans-serif;
+        background: #2a2a2a;
+        color: var(--ink);
+        height: 100%;
+        overflow: hidden;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+      #map {
+        width: 100vw;
+        height: 100vh;
+        background: var(--parchment);
+      }
+      .leaflet-tile {
+        filter: contrast(0.85) brightness(1.05);
+      }
+      .leaflet-top.leaflet-right {
+        top: 64px;
+      }
+      .leaflet-bottom.leaflet-left {
+        bottom: 96px;
+      }
+
+      /* ── FOG ── */
+      #fog-canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 400;
+      }
+
+      /* ── HEADER ── */
+      #header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        padding-top: max(10px, env(safe-area-inset-top));
+        background: var(--ui-bg);
+        border-bottom: 1px solid var(--border);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+      #header h1 {
+        font-family: "Noto Serif JP", serif;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: 0.08em;
+      }
+      #status {
+        font-size: 11px;
+        color: var(--ink-soft);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #gps-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #999;
+        flex-shrink: 0;
+      }
+      #gps-dot.active {
+        background: #27ae60;
+        box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.25);
+      }
+      #gps-dot.searching {
+        background: #e67e22;
+      }
+      #user-avatar-wrap {
+        position: relative;
+      }
+      #user-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1.5px solid var(--border);
+        cursor: pointer;
+        flex-shrink: 0;
+        display: block;
+      }
+      #user-avatar-placeholder {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #user-menu {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        background: var(--ui-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 6px 0;
+        min-width: 160px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        display: none;
+        z-index: 700;
+      }
+      #user-menu.show {
+        display: block;
+      }
+      #user-menu .menu-name {
+        padding: 10px 16px 6px;
+        font-size: 12px;
+        color: var(--ink-soft);
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 4px;
+      }
+      #user-menu a {
+        display: block;
+        padding: 10px 16px;
+        font-size: 14px;
+        color: var(--ink);
+        text-decoration: none;
+      }
+      #user-menu a:hover {
+        background: var(--parchment);
+      }
+
+      /* ── SIDE PANEL ── */
+      #panel-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 640;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s;
+      }
+      #panel-overlay.show {
+        opacity: 1;
+        pointer-events: all;
+      }
+      #side-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: min(320px, 88vw);
+        height: 100%;
+        z-index: 650;
+        background: var(--ui-bg);
+        border-left: 1px solid var(--border);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        transform: translateX(100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        flex-direction: column;
+        padding-top: env(safe-area-inset-top);
+      }
+      #side-panel.open {
+        transform: translateX(0);
+      }
+      #panel-header {
+        padding: 16px 16px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      #panel-header-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        font-family: "Noto Serif JP", serif;
+        font-size: 15px;
+        color: var(--accent);
+      }
+      #close-panel {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 22px;
+        color: var(--ink-soft);
+        line-height: 1;
+        padding: 4px 8px;
+      }
+      /* タブ */
+      .panel-tabs {
+        display: flex;
+        gap: 0;
+      }
+      .panel-tab {
+        flex: 1;
+        padding: 9px 8px;
+        text-align: center;
+        font-size: 13px;
+        color: var(--ink-soft);
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: all 0.15s;
+        font-family: "Noto Sans JP", sans-serif;
+        background: none;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+      }
+      .panel-tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+        font-weight: 500;
+      }
+      #panel-body {
+        flex: 1;
+        overflow-y: auto;
+      }
+      #pins-list,
+      #photos-list {
+        padding: 4px 0;
+      }
+      .pin-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .pin-item:active {
+        background: var(--parchment);
+      }
+      .pin-item-name {
+        font-weight: 500;
+        font-size: 14px;
+        color: var(--ink);
+        margin-bottom: 3px;
+      }
+      .pin-item-note {
+        font-size: 12px;
+        color: var(--ink-soft);
+        line-height: 1.5;
+      }
+      .pin-item-date {
+        font-size: 11px;
+        color: var(--accent-light);
+        margin-top: 4px;
+      }
+
+      /* 写真リスト */
+      #photos-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2px;
+        padding: 2px;
+      }
+      .photo-thumb-item {
+        aspect-ratio: 1;
+        overflow: hidden;
+        cursor: pointer;
+        position: relative;
+        background: var(--parchment-dark);
+      }
+      .photo-thumb-item img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .photo-thumb-date {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font-size: 9px;
+        padding: 3px 4px;
+        line-height: 1.3;
+      }
+
+      #no-items {
+        padding: 40px 20px;
+        text-align: center;
+        color: var(--ink-soft);
+        font-size: 13px;
+        line-height: 1.9;
+      }
+
+      /* ── TOOLBAR ── */
+      #toolbar {
+        position: fixed;
+        bottom: max(20px, env(safe-area-inset-bottom));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 600;
+        display: flex;
+        gap: 2px;
+        background: var(--ui-bg);
+        border: 1px solid var(--border);
+        border-radius: 50px;
+        padding: 6px 10px;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+      }
+      .tool-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 10px;
+        color: var(--ink-soft);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        transition: all 0.15s;
+        font-family: "Noto Sans JP", sans-serif;
+        min-width: 52px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .tool-btn:active {
+        transform: scale(0.95);
+      }
+      .tool-btn.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      .tool-btn svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      /* ── MODALS / SHEETS ── */
+      .modal-bg {
+        position: fixed;
+        inset: 0;
+        z-index: 700;
+        background: rgba(20, 15, 10, 0.6);
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+        backdrop-filter: blur(2px);
+      }
+      .modal-bg.show {
+        opacity: 1;
+        pointer-events: all;
+      }
+      .modal-sheet {
+        background: var(--parchment);
+        border-radius: 20px 20px 0 0;
+        width: 100%;
+        max-width: 520px;
+        padding: 20px 24px;
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
+        transform: translateY(40px);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+      .modal-bg.show .modal-sheet {
+        transform: translateY(0);
+      }
+      .sheet-handle {
+        width: 36px;
+        height: 4px;
+        background: rgba(0, 0, 0, 0.15);
+        border-radius: 2px;
+        margin: 0 auto 16px;
+      }
+      .modal-sheet h2 {
+        font-family: "Noto Serif JP", serif;
+        font-size: 16px;
+        color: var(--accent);
+        margin-bottom: 14px;
+      }
+      .modal-sheet label {
+        display: block;
+        font-size: 12px;
+        color: var(--ink-soft);
+        margin-bottom: 5px;
+        margin-top: 12px;
+      }
+      .modal-sheet input,
+      .modal-sheet textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fff;
+        font-family: "Noto Sans JP", sans-serif;
+        font-size: 15px;
+        color: var(--ink);
+        outline: none;
+        resize: vertical;
+        appearance: none;
+      }
+      .modal-sheet input:focus,
+      .modal-sheet textarea:focus {
+        border-color: var(--accent-light);
+      }
+      .modal-sheet textarea {
+        min-height: 72px;
+      }
+      .modal-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+        justify-content: flex-end;
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        padding: 11px 22px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-family: "Noto Sans JP", sans-serif;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .btn-primary:active {
+        opacity: 0.85;
+      }
+      .btn-ghost {
+        background: none;
+        color: var(--ink-soft);
+        border: 1px solid var(--border);
+        padding: 11px 16px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-family: "Noto Sans JP", sans-serif;
+        font-size: 15px;
+      }
+      .btn-danger {
+        background: none;
+        color: var(--pin-red);
+        border: 1px solid rgba(192, 57, 43, 0.3);
+        padding: 11px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-family: "Noto Sans JP", sans-serif;
+        font-size: 14px;
+        margin-right: auto;
+      }
+
+      /* ── CAMERA SHEET ── */
+      #camera-preview-wrap {
+        width: 100%;
+        aspect-ratio: 4/3;
+        background: #111;
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+        margin-bottom: 12px;
+      }
+      #camera-video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #camera-canvas {
+        display: none;
+      }
+      #captured-preview {
+        width: 100%;
+        aspect-ratio: 4/3;
+        background: #111;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 12px;
+        display: none;
+      }
+      #captured-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #shutter-row {
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+      #shutter-btn {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: #fff;
+        border: 4px solid var(--accent);
+        cursor: pointer;
+        transition: transform 0.1s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #shutter-btn:active {
+        transform: scale(0.93);
+      }
+      #shutter-btn svg {
+        width: 28px;
+        height: 28px;
+        color: var(--accent);
+      }
+      #retake-btn {
+        background: none;
+        border: 1px solid var(--border);
+        color: var(--ink-soft);
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: "Noto Sans JP", sans-serif;
+        cursor: pointer;
+        display: none;
+      }
+      #flip-btn {
+        background: none;
+        border: 1px solid var(--border);
+        color: var(--ink-soft);
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      #flip-btn svg {
+        width: 20px;
+        height: 20px;
+      }
+      .camera-status {
+        font-size: 12px;
+        color: var(--ink-soft);
+        text-align: center;
+        margin-bottom: 8px;
+      }
+
+      /* ── PHOTO VIEWER ── */
+      #photo-viewer {
+        position: fixed;
+        inset: 0;
+        z-index: 800;
+        background: rgba(0, 0, 0, 0.92);
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      #photo-viewer.show {
+        display: flex;
+      }
+      #viewer-img {
+        max-width: 100%;
+        max-height: 75vh;
+        object-fit: contain;
+        border-radius: 6px;
+      }
+      #viewer-info {
+        color: #ddd;
+        text-align: center;
+        margin-top: 16px;
+        padding: 0 24px;
+      }
+      #viewer-info .v-date {
+        font-size: 13px;
+        color: #aaa;
+        margin-bottom: 6px;
+      }
+      #viewer-info .v-note {
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      #viewer-close {
+        position: absolute;
+        top: max(16px, env(safe-area-inset-top));
+        right: 16px;
+        background: rgba(255, 255, 255, 0.15);
+        border: none;
+        color: #fff;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #viewer-del {
+        margin-top: 16px;
+        background: none;
+        border: 1px solid rgba(192, 57, 43, 0.5);
+        color: #e88;
+        padding: 8px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        cursor: pointer;
+        font-family: "Noto Sans JP", sans-serif;
+      }
+      #viewer-map-btn {
+        margin-top: 10px;
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #ddd;
+        padding: 8px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        cursor: pointer;
+        font-family: "Noto Sans JP", sans-serif;
+      }
+
+      /* ── PHOTO MAP MARKER ── */
+      .photo-map-marker {
+        width: 52px;
+        height: 52px;
+        border-radius: 8px 8px 8px 0;
+        border: 2px solid #fff;
+        overflow: hidden;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+        cursor: pointer;
+        transform: rotate(0deg);
+        background: var(--parchment-dark);
+      }
+      .photo-map-marker img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      /* ── POS MARKER ── */
+      .pos-dot {
+        width: 16px;
+        height: 16px;
+        background: #1a6eda;
+        border: 3px solid #fff;
+        border-radius: 50%;
+        box-shadow: 0 0 0 4px rgba(26, 110, 218, 0.25);
+      }
+
+      /* ── POPUP ── */
+      .leaflet-popup-content-wrapper {
+        background: var(--parchment);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+      }
+      .leaflet-popup-tip {
+        background: var(--parchment);
+      }
+      .popup-name {
+        font-family: "Noto Serif JP", serif;
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--accent);
+        margin-bottom: 6px;
+      }
+      .popup-note {
+        font-size: 13px;
+        color: var(--ink-soft);
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+      .popup-actions {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+      }
+      .popup-btn {
+        font-size: 12px;
+        padding: 5px 11px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: none;
+        font-family: "Noto Sans JP", sans-serif;
+        color: var(--ink-soft);
+      }
+      .popup-btn.del {
+        color: var(--pin-red);
+        border-color: rgba(192, 57, 43, 0.3);
+      }
+
+      /* photo popup */
+      .photo-popup-img {
+        width: 180px;
+        height: 135px;
+        object-fit: cover;
+        border-radius: 6px;
+        cursor: pointer;
+        display: block;
+        margin-bottom: 8px;
+      }
+      .photo-popup-date {
+        font-size: 11px;
+        color: var(--ink-soft);
+        margin-bottom: 6px;
+      }
+
+      body.pin-mode #map {
+        cursor: crosshair;
+      }
+      body.cam-mode #map {
+        cursor: crosshair;
+      }
+
+      /* upload progress */
+      #upload-toast {
+        position: fixed;
+        bottom: 100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(30, 30, 30, 0.85);
+        color: #fff;
+        padding: 10px 20px;
+        border-radius: 20px;
+        font-size: 13px;
+        z-index: 900;
+        display: none;
+        backdrop-filter: blur(6px);
+      }
+      #upload-toast.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- HEADER -->
+    <div id="header">
+      <h1>霧 の 地 図</h1>
+      <div id="status">
+        <div id="gps-dot" class="searching"></div>
+        <span id="status-text">GPS取得中...</span>
+      </div>
+      <div id="user-avatar-wrap">
+        <div id="user-avatar-placeholder" onclick="toggleMenu()">
+          {{ (user.display_name or user.username)[0] | upper }}
+        </div>
+        <div id="user-menu">
+          <div class="menu-name">{{ user.display_name or user.username }}</div>
+          <a
+            href="#"
+            onclick="
+              openPanel();
+              toggleMenu();
+              return false;
+            "
+            >📍 記録した場所</a
+          >
+          <a href="/logout">ログアウト</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAP -->
+    <div id="map"></div>
+    <canvas id="fog-canvas"></canvas>
+
+    <!-- PANEL -->
+    <div id="panel-overlay" onclick="closePanel()"></div>
+    <div id="side-panel">
+      <div id="panel-header">
+        <div id="panel-header-top">
+          <span>記録した場所</span>
+          <button id="close-panel" onclick="closePanel()">×</button>
+        </div>
+        <div class="panel-tabs">
+          <button class="panel-tab active" onclick="switchTab('pins')">
+            📍 ピン
+          </button>
+          <button class="panel-tab" onclick="switchTab('photos')">
+            📷 写真
+          </button>
+        </div>
+      </div>
+      <div id="panel-body">
+        <div id="pins-list"></div>
+        <div id="photos-list" style="display: none">
+          <div id="photos-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOOLBAR -->
+    <div id="toolbar">
+      <button class="tool-btn" onclick="locateMe()">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+          <circle cx="12" cy="12" r="8" stroke-dasharray="2 3" />
+        </svg>
+        現在地
+      </button>
+      <button class="tool-btn" id="btn-cam" onclick="startCameraMode()">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path
+            d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"
+          />
+          <circle cx="12" cy="13" r="4" />
+        </svg>
+        撮影
+      </button>
+      <button class="tool-btn" id="btn-pin" onclick="togglePinMode()">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path d="M12 21s-7-6.5-7-11a7 7 0 1114 0c0 4.5-7 11-7 11z" />
+          <circle cx="12" cy="10" r="2.5" />
+        </svg>
+        ピン
+      </button>
+      <button class="tool-btn" id="btn-fog" onclick="toggleFog()">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path d="M3 10h18M3 14h18M5 6h14M7 18h10" stroke-linecap="round" />
+        </svg>
+        霧
+      </button>
+      <button class="tool-btn" onclick="openPanel()">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+          />
+        </svg>
+        記録
+      </button>
+    </div>
+
+    <!-- PIN MODAL -->
+    <div class="modal-bg" id="pin-modal">
+      <div class="modal-sheet">
+        <div class="sheet-handle"></div>
+        <h2 id="modal-title">この場所を記録する</h2>
+        <label>場所の名前</label>
+        <input
+          type="text"
+          id="modal-name"
+          placeholder="例: 鈴木書店、桜公園..."
+          autocomplete="off"
+        />
+        <label>メモ・感想</label>
+        <textarea
+          id="modal-note"
+          placeholder="どんな場所か、気づいたことなど..."
+        ></textarea>
+        <div class="modal-actions">
+          <button
+            class="btn-danger"
+            id="btn-delete"
+            style="display: none"
+            onclick="deleteCurrentPin()"
+          >
+            削除
+          </button>
+          <button class="btn-ghost" onclick="closePinModal()">
+            キャンセル
+          </button>
+          <button class="btn-primary" onclick="savePin()">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CAMERA SHEET -->
+    <div class="modal-bg" id="camera-modal">
+      <div class="modal-sheet">
+        <div class="sheet-handle"></div>
+        <h2>📷 写真を撮影する</h2>
+        <p class="camera-status" id="cam-status">カメラを起動中...</p>
+
+        <!-- ライブプレビュー -->
+        <div id="camera-preview-wrap">
+          <video id="camera-video" autoplay playsinline muted></video>
+        </div>
+        <canvas id="camera-canvas"></canvas>
+
+        <!-- 撮影後プレビュー -->
+        <div id="captured-preview">
+          <img id="captured-img" src="" alt="撮影した写真" />
+        </div>
+
+        <div id="shutter-row">
+          <button id="flip-btn" onclick="flipCamera()" title="カメラ切替">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
+              <path d="M1 4v6h6M23 20v-6h-6" />
+              <path
+                d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"
+              />
+            </svg>
+          </button>
+          <button id="shutter-btn" onclick="shootPhoto()">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="8" />
+            </svg>
+          </button>
+          <button id="retake-btn" onclick="retakePhoto()">撮り直す</button>
+        </div>
+
+        <label style="margin-top: 4px">メモ（任意）</label>
+        <textarea
+          id="cam-note"
+          placeholder="撮影した場所や気づいたことを..."
+          style="min-height: 60px"
+        ></textarea>
+        <div class="modal-actions">
+          <button class="btn-ghost" onclick="closeCameraModal()">
+            キャンセル
+          </button>
+          <button
+            class="btn-primary"
+            id="save-photo-btn"
+            onclick="savePhoto()"
+            style="display: none"
+          >
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHOTO VIEWER -->
+    <div id="photo-viewer">
+      <button id="viewer-close" onclick="closeViewer()">×</button>
+      <img id="viewer-img" src="" alt="" />
+      <div id="viewer-info">
+        <div class="v-date" id="viewer-date"></div>
+        <div class="v-note" id="viewer-note"></div>
+      </div>
+      <button id="viewer-map-btn" onclick="flyToViewerPhoto()">
+        地図上の場所を見る
+      </button>
+      <button id="viewer-del" onclick="deleteViewerPhoto()">
+        この写真を削除
+      </button>
+    </div>
+
+    <!-- UPLOAD TOAST -->
+    <div id="upload-toast">アップロード中...</div>
+
+    <script>
+      // ══════════════════════════════════════════
+      //  CONFIG
+      // ══════════════════════════════════════════
+      const REVEAL_RADIUS_M = 10;
+      const DEDUP_M = 3;
+      const BLUR_PX = 20;
+      const SYNC_INTERVAL = 15000;
+      const FOG_COLOR = "rgba(68,68,68,0.92)";
+
+      // ══════════════════════════════════════════
+      //  STATE
+      // ══════════════════════════════════════════
+      let map, fogCanvas, fogCtx;
+      let currentPos = null;
+      let posMarker = null;
+      let revealedSpots = [];
+      let pendingSpots = [];
+      let pins = [];
+      let photos = [];
+      let pinMode = false;
+      let camMode = false;
+      let fogVisible = true;
+      let editingPinId = null;
+      let pendingLatLng = null;
+      let panelOpen = false;
+      let currentTab = "pins";
+
+      // camera
+      let videoStream = null;
+      let capturedBlob = null;
+      let facingMode = "environment"; // back camera default
+      let photoLatLng = null;
+
+      // viewer
+      let viewerPhotoId = null;
+      let viewerPhotoLatLng = null;
+
+      // ══════════════════════════════════════════
+      //  MAP
+      // ══════════════════════════════════════════
+      function initMap() {
+        map = L.map("map", { zoomControl: true });
+        L.tileLayer(
+          "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png",
+          {
+            maxZoom: 19,
+            attribution: "© OpenStreetMap © CARTO",
+            subdomains: "abcd",
+          },
+        ).addTo(map);
+        map.setView([35.4437, 139.638], 17);
+
+        fogCanvas = document.getElementById("fog-canvas");
+        fogCtx = fogCanvas.getContext("2d");
+        resizeFog();
+        map.on("move zoom", drawFog);
+        window.addEventListener("resize", () => {
+          resizeFog();
+          drawFog();
+        });
+        map.on("click", onMapClick);
+
+        loadData();
+        startGPS();
+        startSyncLoop();
+        drawFog();
+      }
+
+      // ══════════════════════════════════════════
+      //  GPS
+      // ══════════════════════════════════════════
+      function startGPS() {
+        if (!navigator.geolocation) {
+          setStatus("GPS非対応", false);
+          return;
+        }
+        setStatus("GPS取得中...", "search");
+        navigator.geolocation.getCurrentPosition(onPos, onPosError, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        });
+        navigator.geolocation.watchPosition(onPos, onPosError, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 2000,
+        });
+      }
+      function onPos(pos) {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        currentPos = { lat, lng };
+        setStatus("GPS取得中", true);
+        updatePositionMarker(lat, lng);
+        addRevealedSpot(lat, lng, true);
+        drawFog();
+      }
+      function onPosError() {
+        setStatus("デモモード", false);
+        simulateWalk();
+      }
+      function simulateWalk() {
+        let lat = 35.4437,
+          lng = 139.638,
+          angle = Math.random() * Math.PI * 2;
+        map.setView([lat, lng], 17);
+        const step = () => {
+          angle += (Math.random() - 0.5) * 0.8;
+          lat += Math.cos(angle) * 0.00003;
+          lng += Math.sin(angle) * 0.00004;
+          currentPos = { lat, lng };
+          updatePositionMarker(lat, lng);
+          addRevealedSpot(lat, lng, true);
+          drawFog();
+        };
+        step();
+        setInterval(step, 3000);
+      }
+      function setStatus(text, gps) {
+        document.getElementById("status-text").textContent = text;
+        const dot = document.getElementById("gps-dot");
+        dot.className =
+          gps === true ? "active" : gps === "search" ? "searching" : "";
+      }
+      function updatePositionMarker(lat, lng) {
+        const ll = [lat, lng];
+        if (!posMarker) {
+          posMarker = L.marker(ll, {
+            icon: L.divIcon({
+              className: "",
+              html: '<div class="pos-dot"></div>',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8],
+            }),
+            zIndexOffset: 1000,
+          }).addTo(map);
+        } else {
+          posMarker.setLatLng(ll);
+        }
+      }
+
+      // ══════════════════════════════════════════
+      //  FOG
+      // ══════════════════════════════════════════
+      function resizeFog() {
+        fogCanvas.width = window.innerWidth;
+        fogCanvas.height = window.innerHeight;
+      }
+      function ll2px(lat, lng) {
+        const p = map.latLngToContainerPoint([lat, lng]);
+        return { x: p.x, y: p.y };
+      }
+      function m2px(m) {
+        const lat = currentPos ? currentPos.lat : map.getCenter().lat;
+        return (
+          m /
+          ((156543.03392 * Math.cos((lat * Math.PI) / 180)) /
+            Math.pow(2, map.getZoom()))
+        );
+      }
+      function drawFog() {
+        const W = fogCanvas.width,
+          H = fogCanvas.height;
+        fogCtx.clearRect(0, 0, W, H);
+        if (!fogVisible) return;
+        fogCtx.fillStyle = FOG_COLOR;
+        fogCtx.fillRect(0, 0, W, H);
+        if (!revealedSpots.length) return;
+        fogCtx.save();
+        fogCtx.globalCompositeOperation = "destination-out";
+        const r = m2px(REVEAL_RADIUS_M) + BLUR_PX;
+        for (const s of revealedSpots) {
+          const px = ll2px(s.lat, s.lng);
+          const g = fogCtx.createRadialGradient(px.x, px.y, 0, px.x, px.y, r);
+          g.addColorStop(0, "rgba(0,0,0,1)");
+          g.addColorStop(0.6, "rgba(0,0,0,0.96)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          fogCtx.fillStyle = g;
+          fogCtx.beginPath();
+          fogCtx.arc(px.x, px.y, r, 0, Math.PI * 2);
+          fogCtx.fill();
+        }
+        fogCtx.restore();
+      }
+      function addRevealedSpot(lat, lng, pending = false) {
+        for (const s of revealedSpots)
+          if (distM(s.lat, s.lng, lat, lng) < DEDUP_M) return;
+        revealedSpots.push({ lat, lng });
+        if (pending) pendingSpots.push({ lat, lng });
+      }
+      function distM(a, b, c, d) {
+        const R = 6371000,
+          dLat = ((c - a) * Math.PI) / 180,
+          dLng = ((d - b) * Math.PI) / 180;
+        const x =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos((a * Math.PI) / 180) *
+            Math.cos((c * Math.PI) / 180) *
+            Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+      }
+      async function syncSpots() {
+        if (!pendingSpots.length) return;
+        const toSend = [...pendingSpots];
+        pendingSpots = [];
+        try {
+          await fetch("/api/spots", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(toSend),
+          });
+        } catch (e) {
+          pendingSpots = [...toSend, ...pendingSpots];
+        }
+      }
+      function startSyncLoop() {
+        setInterval(syncSpots, SYNC_INTERVAL);
+        window.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") syncSpots();
+        });
+      }
+
+      // ══════════════════════════════════════════
+      //  MAP CLICK DISPATCH
+      // ══════════════════════════════════════════
+      function onMapClick(e) {
+        if (pinMode) {
+          pendingLatLng = e.latlng;
+          editingPinId = null;
+          openPinModal("この場所を記録する", "", "", false);
+        } else if (camMode) {
+          photoLatLng = e.latlng;
+          openCameraModal();
+        }
+      }
+
+      // ══════════════════════════════════════════
+      //  LOAD DATA
+      // ══════════════════════════════════════════
+      async function loadData() {
+        // pins
+        try {
+          const r = await fetch("/api/pins");
+          const data = await r.json();
+          data.forEach((p) => {
+            addPinToMap(p);
+            pins.push(p);
+          });
+          renderPinList();
+        } catch (e) {
+          console.warn(e);
+        }
+        // spots
+        try {
+          const r = await fetch("/api/spots");
+          const data = await r.json();
+          data.forEach((s) => addRevealedSpot(s.lat, s.lng, false));
+          if (data.length) drawFog();
+        } catch (e) {
+          console.warn(e);
+        }
+        // photos
+        try {
+          const r = await fetch("/api/photos");
+          const data = await r.json();
+          data.forEach((p) => {
+            addPhotoMarker(p);
+            photos.push(p);
+          });
+          renderPhotoGrid();
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      // ══════════════════════════════════════════
+      //  PINS
+      // ══════════════════════════════════════════
+      const PIN_SVG = `<svg viewBox="0 0 30 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:30px;height:40px;cursor:pointer"><path d="M15 0C7.268 0 1 6.268 1 14c0 10.12 14 26 14 26s14-15.88 14-26C29 6.268 22.732 0 15 0z" fill="#c0392b" stroke="#fff" stroke-width="1.5"/><circle cx="15" cy="14" r="5" fill="#fff"/></svg>`;
+
+      function addPinToMap(pin) {
+        const marker = L.marker([pin.lat, pin.lng], {
+          icon: L.divIcon({
+            className: "",
+            html: PIN_SVG,
+            iconSize: [30, 40],
+            iconAnchor: [15, 40],
+            popupAnchor: [0, -44],
+          }),
+          zIndexOffset: 500,
+        }).addTo(map);
+        marker.bindPopup(buildPinPopup(pin), { maxWidth: 240 });
+        pin.marker = marker;
+        return marker;
+      }
+      function buildPinPopup(pin) {
+        return `<div class="popup-name">${esc(pin.name || "名称未設定")}</div>
+    ${pin.note ? `<div class="popup-note">${esc(pin.note)}</div>` : ""}
+    <div class="popup-actions">
+      <button class="popup-btn" onclick="editPin('${pin.id}')">編集</button>
+      <button class="popup-btn del" onclick="deletePinById('${pin.id}')">削除</button>
+    </div>`;
+      }
+      window.editPin = function (id) {
+        const p = pins.find((p) => p.id === id);
+        if (!p) return;
+        editingPinId = id;
+        pendingLatLng = null;
+        openPinModal("場所を編集する", p.name, p.note, true);
+      };
+      window.deletePinById = function (id) {
+        if (!confirm("このピンを削除しますか?")) return;
+        map.closePopup();
+        removePinById(id);
+        fetch(`/api/pins/${id}`, { method: "DELETE" });
+      };
+      function removePinById(id) {
+        const idx = pins.findIndex((p) => p.id === id);
+        if (idx === -1) return;
+        pins[idx].marker.remove();
+        pins.splice(idx, 1);
+        renderPinList();
+      }
+      async function savePin() {
+        const name = document.getElementById("modal-name").value.trim();
+        const note = document.getElementById("modal-note").value.trim();
+        if (editingPinId) {
+          const pin = pins.find((p) => p.id === editingPinId);
+          if (pin) {
+            pin.name = name;
+            pin.note = note;
+            pin.marker.setPopupContent(buildPinPopup(pin));
+            await fetch(`/api/pins/${editingPinId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, note }),
+            });
+            renderPinList();
+          }
+        } else if (pendingLatLng) {
+          try {
+            const r = await fetch("/api/pins", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                lat: pendingLatLng.lat,
+                lng: pendingLatLng.lng,
+                name,
+                note,
+              }),
+            });
+            const pin = await r.json();
+            addPinToMap(pin);
+            pins.push(pin);
+            renderPinList();
+          } catch (e) {
+            console.error(e);
+          }
+          pinMode = false;
+          document.getElementById("btn-pin").classList.remove("active");
+          document.body.classList.remove("pin-mode");
+        }
+        closePinModal();
+      }
+      function deleteCurrentPin() {
+        if (!editingPinId || !confirm("このピンを削除しますか?")) return;
+        removePinById(editingPinId);
+        fetch(`/api/pins/${editingPinId}`, { method: "DELETE" });
+        closePinModal();
+      }
+      function renderPinList() {
+        const list = document.getElementById("pins-list");
+        if (!pins.length) {
+          list.innerHTML = `<div id="no-items">まだピンがありません。<br>「ピン」モードで地図をタップして記録を。</div>`;
+          return;
+        }
+        list.innerHTML = pins
+          .map(
+            (p) => `<div class="pin-item" onclick="flyToPin('${p.id}')">
+    <div class="pin-item-name">📍 ${esc(p.name || "名称未設定")}</div>
+    ${p.note ? `<div class="pin-item-note">${esc(p.note.slice(0, 80))}${p.note.length > 80 ? "…" : ""}</div>` : ""}
+    <div class="pin-item-date">${fmtDate(p.created_at)}</div>
+  </div>`,
+          )
+          .join("");
+      }
+      window.flyToPin = function (id) {
+        const p = pins.find((p) => p.id === id);
+        if (!p) return;
+        map.flyTo([p.lat, p.lng], 18, { duration: 0.8 });
+        setTimeout(() => p.marker.openPopup(), 900);
+        closePanel();
+      };
+
+      // ══════════════════════════════════════════
+      //  PHOTOS — MAP MARKERS
+      // ══════════════════════════════════════════
+      function addPhotoMarker(photo) {
+        const html = `<div class="photo-map-marker" onclick="openViewer('${photo.id}')"><img src="${photo.thumb_url}" alt="" loading="lazy"></div>`;
+        const marker = L.marker([photo.lat, photo.lng], {
+          icon: L.divIcon({
+            className: "",
+            html,
+            iconSize: [52, 52],
+            iconAnchor: [4, 48],
+            popupAnchor: [22, -52],
+          }),
+          zIndexOffset: 300,
+        }).addTo(map);
+        // ポップアップ
+        marker.bindPopup(
+          `
+    <img class="photo-popup-img" src="${photo.thumb_url}" onclick="openViewer('${photo.id}')" alt="">
+    <div class="photo-popup-date">${fmtDatetime(photo.taken_at)}</div>
+    ${photo.note ? `<div class="popup-note">${esc(photo.note)}</div>` : ""}
+    <div class="popup-actions">
+      <button class="popup-btn" onclick="openViewer('${photo.id}')">拡大</button>
+      <button class="popup-btn del" onclick="deletePhotoById('${photo.id}')">削除</button>
+    </div>`,
+          { maxWidth: 220 },
+        );
+        photo.marker = marker;
+        return marker;
+      }
+
+      function renderPhotoGrid() {
+        const grid = document.getElementById("photos-grid");
+        if (!photos.length) {
+          document.getElementById("photos-list").innerHTML =
+            `<div id="no-items">まだ写真がありません。<br>「撮影」モードで地図をタップして撮影を。</div>`;
+          return;
+        }
+        grid.innerHTML = photos
+          .map(
+            (p) => `
+    <div class="photo-thumb-item" onclick="openViewer('${p.id}')">
+      <img src="${p.thumb_url}" alt="" loading="lazy">
+      <div class="photo-thumb-date">${fmtDatetime(p.taken_at)}</div>
+    </div>`,
+          )
+          .join("");
+      }
+
+      // ══════════════════════════════════════════
+      //  CAMERA
+      // ══════════════════════════════════════════
+      function startCameraMode() {
+        camMode = !camMode;
+        document.getElementById("btn-cam").classList.toggle("active", camMode);
+        document.body.classList.toggle("cam-mode", camMode);
+        if (pinMode) {
+          pinMode = false;
+          document.getElementById("btn-pin").classList.remove("active");
+          document.body.classList.remove("pin-mode");
+        }
+      }
+
+      async function openCameraModal() {
+        document.getElementById("camera-modal").classList.add("show");
+        document.getElementById("captured-preview").style.display = "none";
+        document.getElementById("camera-preview-wrap").style.display = "";
+        document.getElementById("shutter-btn").style.display = "";
+        document.getElementById("retake-btn").style.display = "none";
+        document.getElementById("save-photo-btn").style.display = "none";
+        document.getElementById("cam-note").value = "";
+        capturedBlob = null;
+        await startStream();
+      }
+
+      async function startStream() {
+        if (videoStream) stopStream();
+        const video = document.getElementById("camera-video");
+        try {
+          document.getElementById("cam-status").textContent =
+            "カメラを起動中...";
+          videoStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode,
+              width: { ideal: 1920 },
+              height: { ideal: 1440 },
+            },
+            audio: false,
+          });
+          video.srcObject = videoStream;
+          document.getElementById("cam-status").textContent =
+            "画面をタップして撮影位置を選び、シャッターを押してください";
+        } catch (e) {
+          document.getElementById("cam-status").textContent =
+            "カメラにアクセスできません: " + e.message;
+        }
+      }
+
+      function stopStream() {
+        if (videoStream) {
+          videoStream.getTracks().forEach((t) => t.stop());
+          videoStream = null;
+        }
+      }
+
+      function flipCamera() {
+        facingMode = facingMode === "environment" ? "user" : "environment";
+        startStream();
+      }
+
+      function shootPhoto() {
+        const video = document.getElementById("camera-video");
+        const canvas = document.getElementById("camera-canvas");
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 960;
+        const ctx = canvas.getContext("2d");
+        // フロントカメラは左右反転して自然に
+        if (facingMode === "user") {
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(
+          (blob) => {
+            capturedBlob = blob;
+            const url = URL.createObjectURL(blob);
+            document.getElementById("captured-img").src = url;
+            document.getElementById("captured-preview").style.display = "";
+            document.getElementById("camera-preview-wrap").style.display =
+              "none";
+            document.getElementById("shutter-btn").style.display = "none";
+            document.getElementById("flip-btn").style.display = "none";
+            document.getElementById("retake-btn").style.display = "";
+            document.getElementById("save-photo-btn").style.display = "";
+            document.getElementById("cam-status").textContent =
+              "撮影完了！メモを入力して保存してください。";
+            stopStream();
+          },
+          "image/jpeg",
+          0.88,
+        );
+      }
+
+      function retakePhoto() {
+        capturedBlob = null;
+        document.getElementById("captured-preview").style.display = "none";
+        document.getElementById("camera-preview-wrap").style.display = "";
+        document.getElementById("shutter-btn").style.display = "";
+        document.getElementById("flip-btn").style.display = "";
+        document.getElementById("retake-btn").style.display = "none";
+        document.getElementById("save-photo-btn").style.display = "none";
+        startStream();
+      }
+
+      // blob を base64 文字列に変換するユーティリティ
+      function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result);
+          r.onerror = reject;
+          r.readAsDataURL(blob);
+        });
+      }
+
+      // Canvas でサムネイルを生成して Blob で返す
+      function makeThumbnailBlob(srcBlob, maxSize = 320) {
+        return new Promise((resolve) => {
+          const url = URL.createObjectURL(srcBlob);
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(
+              maxSize / img.width,
+              maxSize / img.height,
+              1,
+            );
+            const w = Math.round(img.width * scale);
+            const h = Math.round(img.height * scale);
+            const c = document.createElement("canvas");
+            c.width = w;
+            c.height = h;
+            c.getContext("2d").drawImage(img, 0, 0, w, h);
+            URL.revokeObjectURL(url);
+            c.toBlob(resolve, "image/jpeg", 0.75);
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(null);
+          };
+          img.src = url;
+        });
+      }
+
+      async function savePhoto() {
+        if (!capturedBlob) return;
+        const lat = photoLatLng
+          ? photoLatLng.lat
+          : currentPos
+            ? currentPos.lat
+            : null;
+        const lng = photoLatLng
+          ? photoLatLng.lng
+          : currentPos
+            ? currentPos.lng
+            : null;
+        if (lat === null) {
+          alert("位置情報が取得できていません");
+          return;
+        }
+
+        const note = document.getElementById("cam-note").value.trim();
+        showToast("アップロード中...");
+
+        try {
+          // フル画像とサムネイルを並列で base64 に変換
+          const thumbBlob = await makeThumbnailBlob(capturedBlob);
+          const [imageB64, thumbB64] = await Promise.all([
+            blobToBase64(capturedBlob),
+            thumbBlob ? blobToBase64(thumbBlob) : Promise.resolve(""),
+          ]);
+
+          const r = await fetch("/api/photos", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              lat,
+              lng,
+              note,
+              image: imageB64,
+              thumb: thumbB64,
+            }),
+          });
+          if (!r.ok) throw new Error(await r.text());
+          const photo = await r.json();
+          addPhotoMarker(photo);
+          photos.unshift(photo);
+          renderPhotoGrid();
+          hideToast();
+          closeCameraModal();
+          map.flyTo([lat, lng], 18, { duration: 0.8 });
+        } catch (e) {
+          hideToast();
+          alert("保存に失敗しました: " + e.message);
+        }
+      }
+
+      function closeCameraModal() {
+        stopStream();
+        capturedBlob = null;
+        photoLatLng = null;
+        document.getElementById("camera-modal").classList.remove("show");
+        camMode = false;
+        document.getElementById("btn-cam").classList.remove("active");
+        document.body.classList.remove("cam-mode");
+      }
+
+      // ══════════════════════════════════════════
+      //  PHOTO VIEWER
+      // ══════════════════════════════════════════
+      window.openViewer = function (id) {
+        const photo = photos.find((p) => p.id === id);
+        if (!photo) return;
+        viewerPhotoId = id;
+        viewerPhotoLatLng = { lat: photo.lat, lng: photo.lng };
+        document.getElementById("viewer-img").src = photo.url;
+        document.getElementById("viewer-date").textContent = fmtDatetime(
+          photo.taken_at,
+        );
+        document.getElementById("viewer-note").textContent = photo.note || "";
+        document.getElementById("photo-viewer").classList.add("show");
+        map.closePopup();
+      };
+      function closeViewer() {
+        document.getElementById("photo-viewer").classList.remove("show");
+        viewerPhotoId = null;
+      }
+      window.flyToViewerPhoto = function () {
+        if (!viewerPhotoLatLng) return;
+        closeViewer();
+        closePanel();
+        map.flyTo([viewerPhotoLatLng.lat, viewerPhotoLatLng.lng], 18, {
+          duration: 0.8,
+        });
+        setTimeout(() => {
+          const ph = photos.find((p) => p.id === viewerPhotoId);
+          if (ph && ph.marker) ph.marker.openPopup();
+        }, 900);
+      };
+      window.deleteViewerPhoto = function () {
+        if (!viewerPhotoId || !confirm("この写真を削除しますか?")) return;
+        deletePhotoById(viewerPhotoId);
+        closeViewer();
+      };
+
+      window.deletePhotoById = function (id) {
+        const idx = photos.findIndex((p) => p.id === id);
+        if (idx === -1) return;
+        photos[idx].marker && photos[idx].marker.remove();
+        photos.splice(idx, 1);
+        renderPhotoGrid();
+        fetch(`/api/photos/${id}`, { method: "DELETE" });
+        map.closePopup();
+      };
+
+      // ══════════════════════════════════════════
+      //  PANEL
+      // ══════════════════════════════════════════
+      function switchTab(tab) {
+        currentTab = tab;
+        document
+          .querySelectorAll(".panel-tab")
+          .forEach((el, i) =>
+            el.classList.toggle(
+              "active",
+              (i === 0 && tab === "pins") || (i === 1 && tab === "photos"),
+            ),
+          );
+        document.getElementById("pins-list").style.display =
+          tab === "pins" ? "" : "none";
+        document.getElementById("photos-list").style.display =
+          tab === "photos" ? "" : "none";
+      }
+      function openPanel() {
+        panelOpen = true;
+        document.getElementById("side-panel").classList.add("open");
+        document.getElementById("panel-overlay").classList.add("show");
+      }
+      function closePanel() {
+        panelOpen = false;
+        document.getElementById("side-panel").classList.remove("open");
+        document.getElementById("panel-overlay").classList.remove("show");
+      }
+      function togglePanel() {
+        panelOpen ? closePanel() : openPanel();
+      }
+
+      // ══════════════════════════════════════════
+      //  PIN MODAL
+      // ══════════════════════════════════════════
+      function openPinModal(title, name, note, showDel) {
+        document.getElementById("modal-title").textContent = title;
+        document.getElementById("modal-name").value = name;
+        document.getElementById("modal-note").value = note;
+        document.getElementById("btn-delete").style.display = showDel
+          ? ""
+          : "none";
+        document.getElementById("pin-modal").classList.add("show");
+        setTimeout(() => document.getElementById("modal-name").focus(), 250);
+      }
+      function closePinModal() {
+        document.getElementById("pin-modal").classList.remove("show");
+        editingPinId = null;
+        pendingLatLng = null;
+      }
+      document
+        .getElementById("pin-modal")
+        .addEventListener("click", function (e) {
+          if (e.target === this) closePinModal();
+        });
+
+      // ══════════════════════════════════════════
+      //  TOOLBAR
+      // ══════════════════════════════════════════
+      function togglePinMode() {
+        if (camMode) {
+          camMode = false;
+          document.getElementById("btn-cam").classList.remove("active");
+          document.body.classList.remove("cam-mode");
+        }
+        pinMode = !pinMode;
+        document.getElementById("btn-pin").classList.toggle("active", pinMode);
+        document.body.classList.toggle("pin-mode", pinMode);
+      }
+      function toggleFog() {
+        fogVisible = !fogVisible;
+        document
+          .getElementById("btn-fog")
+          .classList.toggle("active", !fogVisible);
+        drawFog();
+      }
+      function locateMe() {
+        if (currentPos)
+          map.flyTo([currentPos.lat, currentPos.lng], 17, { duration: 1 });
+      }
+
+      // user menu
+      function toggleMenu() {
+        document.getElementById("user-menu").classList.toggle("show");
+      }
+      document.addEventListener("click", (e) => {
+        const m = document.getElementById("user-menu");
+        if (!e.target.closest("#user-avatar-wrap")) m.classList.remove("show");
+      });
+
+      // toast
+      function showToast(msg) {
+        const t = document.getElementById("upload-toast");
+        t.textContent = msg;
+        t.classList.add("show");
+      }
+      function hideToast() {
+        document.getElementById("upload-toast").classList.remove("show");
+      }
+
+      // ══════════════════════════════════════════
+      //  UTILS
+      // ══════════════════════════════════════════
+      function esc(s) {
+        return (s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+      function fmtDate(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+      }
+      function fmtDatetime(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          closePinModal();
+          closeCameraModal();
+          closeViewer();
+        }
+      });
+
+      // ══════════════════════════════════════════
+      //  BOOT
+      // ══════════════════════════════════════════
+      initMap();
+    </script>
+  </body>
+</html>

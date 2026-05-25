@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>霧の地図 — ログイン</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600&family=Noto+Sans+JP:wght@300;400;500&display=swap");
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: "Noto Sans JP", sans-serif;
+        min-height: 100vh;
+        background: #2a2a2a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+
+      .card {
+        background: #f5f0e8;
+        border-radius: 20px;
+        padding: 40px 36px;
+        width: 100%;
+        max-width: 360px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+      }
+
+      .logo {
+        font-family: "Noto Serif JP", serif;
+        font-size: 26px;
+        font-weight: 600;
+        color: #8b5e3c;
+        letter-spacing: 0.15em;
+        text-align: center;
+        margin-bottom: 6px;
+      }
+      .tagline {
+        font-size: 12px;
+        color: #999;
+        text-align: center;
+        margin-bottom: 28px;
+        line-height: 1.7;
+      }
+
+      /* タブ */
+      .tabs {
+        display: flex;
+        border-bottom: 2px solid rgba(139, 94, 60, 0.2);
+        margin-bottom: 24px;
+      }
+      .tab {
+        flex: 1;
+        padding: 9px 8px;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 500;
+        color: #aaa;
+        cursor: pointer;
+        border: none;
+        background: none;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        font-family: "Noto Sans JP", sans-serif;
+        transition: color 0.15s;
+      }
+      .tab.active {
+        color: #8b5e3c;
+        border-bottom-color: #8b5e3c;
+      }
+
+      .form-section {
+        display: none;
+      }
+      .form-section.active {
+        display: block;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 5px;
+        margin-top: 14px;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 11px 14px;
+        border: 1.5px solid rgba(139, 94, 60, 0.25);
+        border-radius: 9px;
+        background: #fff;
+        font-family: "Noto Sans JP", sans-serif;
+        font-size: 15px;
+        color: #1a1a1a;
+        outline: none;
+        appearance: none;
+        transition: border-color 0.15s;
+      }
+      input:focus {
+        border-color: #c49a6c;
+      }
+
+      .btn-submit {
+        width: 100%;
+        margin-top: 20px;
+        padding: 13px;
+        border: none;
+        border-radius: 10px;
+        background: #8b5e3c;
+        color: #fff;
+        font-family: "Noto Serif JP", serif;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        letter-spacing: 0.05em;
+        transition: background 0.15s;
+      }
+      .btn-submit:hover {
+        background: #7a4f2e;
+      }
+      .btn-submit:active {
+        opacity: 0.85;
+      }
+
+      .error {
+        background: rgba(192, 57, 43, 0.1);
+        border: 1px solid rgba(192, 57, 43, 0.3);
+        color: #c0392b;
+        font-size: 13px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin-bottom: 4px;
+        line-height: 1.5;
+      }
+
+      .hint {
+        font-size: 11px;
+        color: #bbb;
+        text-align: center;
+        margin-top: 18px;
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="logo">霧 の 地 図</div>
+      <p class="tagline">歩いた場所だけが現れる、あなただけの探索地図</p>
+
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('login', this)">
+          ログイン
+        </button>
+        <button class="tab" onclick="switchTab('register', this)">
+          新規登録
+        </button>
+      </div>
+
+      <!-- ログインフォーム -->
+      <div class="form-section active" id="tab-login">
+        <form method="POST" action="/login">
+          <label>ユーザー名</label>
+          <input
+            type="text"
+            name="username"
+            autocomplete="username"
+            required
+            placeholder="例: tanaka_taro"
+          />
+          <label>パスワード</label>
+          <input
+            type="password"
+            name="password"
+            autocomplete="current-password"
+            required
+            placeholder="••••••"
+          />
+          <button type="submit" class="btn-submit">ログイン</button>
+        </form>
+      </div>
+
+      <!-- 新規登録フォーム -->
+      <div class="form-section" id="tab-register">
+        <form method="POST" action="/register">
+          <label
+            >ユーザー名
+            <span style="color: #bbb">（3文字以上・半角英数字）</span></label
+          >
+          <input
+            type="text"
+            name="username"
+            autocomplete="username"
+            required
+            placeholder="例: tanaka_taro"
+            pattern="[a-zA-Z0-9_\-]{3,64}"
+          />
+          <label>表示名 <span style="color: #bbb">（省略可）</span></label>
+          <input
+            type="text"
+            name="display_name"
+            autocomplete="nickname"
+            placeholder="例: 田中 太郎"
+          />
+          <label
+            >パスワード <span style="color: #bbb">（6文字以上）</span></label
+          >
+          <input
+            type="password"
+            name="password"
+            autocomplete="new-password"
+            required
+            placeholder="••••••"
+            minlength="6"
+          />
+          <button type="submit" class="btn-submit">アカウントを作成</button>
+        </form>
+      </div>
+
+      <p class="hint">
+        アカウントはこのサーバー内にのみ保存されます。<br />外部サービスへの送信は行いません。
+      </p>
+    </div>
+
+    <script>
+      function switchTab(name, btn) {
+        document
+          .querySelectorAll(".tab")
+          .forEach((t) => t.classList.remove("active"));
+        document
+          .querySelectorAll(".form-section")
+          .forEach((s) => s.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById("tab-" + name).classList.add("active");
+      }
+      // エラー時は登録タブを開いたままにする
+      const path = location.search;
+    </script>
+  </body>
+</html>
