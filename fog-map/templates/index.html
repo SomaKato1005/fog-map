@@ -65,6 +65,24 @@
     #gps-dot { width: 8px; height: 8px; border-radius: 50%; background: #999; flex-shrink: 0; }
     #gps-dot.active   { background: #27ae60; box-shadow: 0 0 0 3px rgba(39,174,96,0.25); }
     #gps-dot.searching{ background: #e67e22; }
+
+    #bg-indicator {
+      display: none;
+      align-items: center; gap: 5px;
+      font-size: 11px; color: var(--accent);
+      background: rgba(139,94,60,0.1);
+      border: 1px solid rgba(139,94,60,0.25);
+      border-radius: 20px; padding: 3px 10px;
+    }
+    #bg-indicator::before {
+      content: '';
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
     #user-avatar-wrap { position: relative; }
     #user-avatar {
       width: 30px; height: 30px; border-radius: 50%;
@@ -328,6 +346,7 @@
     <div id="gps-dot" class="searching"></div>
     <span id="status-text">GPS取得中...</span>
   </div>
+  <div id="bg-indicator">バックグラウンド追跡中</div>
   <div id="user-avatar-wrap">
     <div id="user-avatar-placeholder" onclick="toggleMenu()">
       {{ ((user.display_name or user.username or '?') | first) | upper }}
@@ -460,11 +479,13 @@
 // ══════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════
-const REVEAL_RADIUS_M = 10;
-const DEDUP_M         = 3;
-const BLUR_PX         = 20;
-const SYNC_INTERVAL   = 15000;
-const FOG_COLOR       = 'rgba(68,68,68,1.0)';
+const REVEAL_RADIUS_M  = 10;
+const DEDUP_M          = 3;    // この距離(m)以内の重複点は追加しない
+const INTERPOLATE_M    = 8;    // 補間点を打つ間隔(m) — REVEALより少し小さく
+const BLUR_PX          = 20;
+const SYNC_INTERVAL    = 15000;
+const SYNC_BG_INTERVAL = 30000;
+const FOG_COLOR        = 'rgba(68,68,68,1.0)';
 
 // ══════════════════════════════════════════
 //  STATE
@@ -491,8 +512,17 @@ let facingMode    = 'environment'; // back camera default
 let photoLatLng   = null;
 
 // viewer
-let viewerPhotoId = null;
+let viewerPhotoId     = null;
 let viewerPhotoLatLng = null;
+
+// バックグラウンド管理
+let wakeLock      = null;
+let isBackground  = false;
+let bgSyncTimer   = null;
+let watchId       = null;
+
+// 補間用：前回のGPS位置
+let lastPos       = null;
 
 // ══════════════════════════════════════════
 //  MAP
@@ -515,6 +545,7 @@ function initMap() {
   loadData();
   startGPS();
   startSyncLoop();
+  acquireWakeLock();
   drawFog();
 }
 
@@ -525,15 +556,44 @@ function startGPS() {
   if (!navigator.geolocation) { setStatus('GPS非対応', false); return; }
   setStatus('GPS取得中...', 'search');
   navigator.geolocation.getCurrentPosition(onPos, onPosError, { enableHighAccuracy:true, timeout:15000, maximumAge:0 });
-  navigator.geolocation.watchPosition(onPos, onPosError, { enableHighAccuracy:true, timeout:10000, maximumAge:2000 });
+  watchId = navigator.geolocation.watchPosition(onPos, onPosError, {
+    enableHighAccuracy: true, timeout: 10000, maximumAge: 2000,
+  });
 }
 function onPos(pos) {
   const { latitude: lat, longitude: lng } = pos.coords;
-  currentPos = { lat, lng };
+  const newPos = { lat, lng };
+
+  // 前回位置との間を補間して中間点を埋める
+  if (lastPos) {
+    interpolateSpots(lastPos, newPos);
+  }
+
+  lastPos    = newPos;
+  currentPos = newPos;
   setStatus('GPS取得中', true);
   updatePositionMarker(lat, lng);
   addRevealedSpot(lat, lng, true);
   drawFog();
+}
+
+/**
+ * 2点間を直線補間し、INTERPOLATE_M 間隔で中間点を追加する
+ * 高速移動（電車など）で点が飛んでも軌跡が途切れなくなる
+ */
+function interpolateSpots(from, to) {
+  const totalDist = distM(from.lat, from.lng, to.lat, to.lng);
+  if (totalDist < INTERPOLATE_M) return; // 近い場合は補間不要
+
+  // 補間点の数（切り捨て）
+  const steps = Math.floor(totalDist / INTERPOLATE_M);
+
+  for (let i = 1; i <= steps; i++) {
+    const t = i / (steps + 1); // 0〈t〈1
+    const iLat = from.lat + (to.lat - from.lat) * t;
+    const iLng = from.lng + (to.lng - from.lng) * t;
+    addRevealedSpot(iLat, iLng, true);
+  }
 }
 function onPosError() {
   setStatus('デモモード', false);
@@ -612,8 +672,40 @@ async function syncSpots() {
   } catch(e) { pendingSpots = [...toSend, ...pendingSpots]; }
 }
 function startSyncLoop() {
-  setInterval(syncSpots, SYNC_INTERVAL);
-  window.addEventListener('visibilitychange', () => { if (document.visibilityState==='hidden') syncSpots(); });
+  setInterval(() => { if (!isBackground) syncSpots(); }, SYNC_INTERVAL);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch(e) { /* Wake Lock 非対応環境では無視 */ }
+}
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release(); wakeLock = null; }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    isBackground = true;
+    releaseWakeLock();
+    syncSpots();
+    bgSyncTimer = setInterval(syncSpots, SYNC_BG_INTERVAL);
+    setStatusBg(true);
+  } else {
+    isBackground = false;
+    if (bgSyncTimer) { clearInterval(bgSyncTimer); bgSyncTimer = null; }
+    syncSpots();
+    drawFog();
+    acquireWakeLock();
+    setStatusBg(false);
+  }
+}
+function setStatusBg(isBg) {
+  const el = document.getElementById('bg-indicator');
+  if (el) el.style.display = isBg ? 'flex' : 'none';
 }
 
 // ══════════════════════════════════════════
