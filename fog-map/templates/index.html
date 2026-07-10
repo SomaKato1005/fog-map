@@ -327,6 +327,86 @@
     body.pin-mode #map { cursor: crosshair; }
     body.cam-mode #map { cursor: crosshair; }
 
+    /* ── MISSION CARD ── */
+    #mission-card {
+      position: fixed;
+      bottom: max(88px, calc(env(safe-area-inset-bottom) + 72px));
+      left: 50%; transform: translateX(-50%);
+      z-index: 590;
+      width: min(360px, 92vw);
+      background: var(--ui-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+    }
+    #mission-card.collapsed #mission-body { display: none; }
+
+    #mission-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    #mission-header-left {
+      display: flex; align-items: center; gap: 8px;
+    }
+    #mission-icon { font-size: 18px; }
+    #mission-label {
+      font-size: 11px; font-weight: 500;
+      color: var(--accent); letter-spacing: 0.05em;
+    }
+    #mission-toggle {
+      font-size: 16px; color: var(--ink-soft);
+      transition: transform 0.2s;
+    }
+    #mission-card.collapsed #mission-toggle { transform: rotate(180deg); }
+
+    #mission-body { padding: 0 14px 14px; }
+    #mission-text {
+      font-family: 'Noto Serif JP', serif;
+      font-size: 14px; color: var(--ink);
+      line-height: 1.7; margin-bottom: 10px;
+    }
+    #mission-progress-wrap {
+      display: flex; align-items: center; gap: 10px;
+    }
+    #mission-progress-bar-bg {
+      flex: 1; height: 6px;
+      background: var(--parchment-dark);
+      border-radius: 3px; overflow: hidden;
+    }
+    #mission-progress-bar {
+      height: 100%; width: 0%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+    #mission-progress-text {
+      font-size: 11px; color: var(--ink-soft);
+      min-width: 36px; text-align: right;
+    }
+    #mission-clear {
+      display: none;
+      margin-top: 10px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 8px;
+      padding: 8px 16px; font-size: 13px;
+      font-family: 'Noto Sans JP', sans-serif;
+      cursor: pointer; width: 100%;
+    }
+    #mission-clear-banner {
+      display: none;
+      text-align: center; padding: 8px;
+      font-size: 13px; color: var(--accent);
+      font-family: 'Noto Serif JP', serif;
+      animation: fadeIn 0.4s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+
     /* upload progress */
     #upload-toast {
       position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
@@ -381,6 +461,28 @@
     <div id="photos-list" style="display:none">
       <div id="photos-grid"></div>
     </div>
+  </div>
+</div>
+
+<!-- MISSION CARD -->
+<div id="mission-card" class="collapsed">
+  <div id="mission-header" onclick="toggleMission()">
+    <div id="mission-header-left">
+      <span id="mission-icon">🗺️</span>
+      <span id="mission-label">ミッション</span>
+    </div>
+    <span id="mission-toggle">▲</span>
+  </div>
+  <div id="mission-body">
+    <div id="mission-text">読み込み中...</div>
+    <div id="mission-progress-wrap">
+      <div id="mission-progress-bar-bg">
+        <div id="mission-progress-bar"></div>
+      </div>
+      <div id="mission-progress-text">0%</div>
+    </div>
+    <div id="mission-clear-banner">🎉 ミッション達成！</div>
+    <button id="mission-clear" onclick="nextMission()">次のミッションへ →</button>
   </div>
 </div>
 
@@ -1126,9 +1228,191 @@ document.addEventListener('keydown', e => {
 });
 
 // ══════════════════════════════════════════
+//  MISSION SYSTEM
+// ══════════════════════════════════════════
+
+const MISSIONS = [
+  // 探索系
+  { id:'explore_50',   icon:'🌫️', text:'霧の中へ踏み出そう！
+50メートル以上歩いて霧を晴らしてみよう。',          type:'distance',  target:50 },
+  { id:'explore_200',  icon:'👣', text:'気になる路地へ曲がってみよう。
+200メートル以上の軌跡を描こう。',            type:'distance',  target:200 },
+  { id:'explore_500',  icon:'🏙️', text:'いつもと違う道を選んでみよう。
+500メートル歩いて新しい景色を見つけよう。', type:'distance',  target:500 },
+  { id:'explore_1000', icon:'🚶', text:'遠回りを楽しもう。
+1キロメートル以上の軌跡を残してみよう。',               type:'distance',  target:1000 },
+  // ピン系
+  { id:'pin_1',   icon:'📍', text:'気になる場所を見つけたらピンを立てよう！
+1つ記録してみよう。',                   type:'pins',      target:1 },
+  { id:'pin_3',   icon:'🗂️', text:'通り過ぎてしまいそうな場所にも注目しよう。
+ピンを3つ立ててみよう。',             type:'pins',      target:3 },
+  { id:'pin_5',   icon:'🏷️', text:'この街の「推しスポット」を探そう。
+お気に入りの場所を5つ記録してみよう。',       type:'pins',      target:5 },
+  // 写真系
+  { id:'photo_1', icon:'📷', text:'目に留まったものをシャッターに収めよう。
+1枚撮影してみよう。',                   type:'photos',    target:1 },
+  { id:'photo_3', icon:'🖼️', text:'いつもは素通りするものを写真に撮ってみよう。
+3枚撮影してみよう。',               type:'photos',    target:3 },
+  // 複合系
+  { id:'combo_1', icon:'⭐', text:'歩いて、見て、記録しよう。
+100m歩きながらピンを1つ立ててみよう。',               type:'combo',     target:{ distance:100, pins:1 } },
+  { id:'combo_2', icon:'🌟', text:'この街をもっとよく知ろう。
+200m歩いて写真を1枚撮ってピンを1つ立てよう。',       type:'combo',     target:{ distance:200, photos:1, pins:1 } },
+  // 自由系（達成判定なし・読むだけ）
+  { id:'free_1',  icon:'🤔', text:'「面白い」と感じる道へ進んでみよう。
+直感に従って歩いてみよう。',                type:'free',      target:0 },
+  { id:'free_2',  icon:'🌿', text:'普段乗らないバスや電車を一駅分使ってみよう。
+降りた駅周辺を探索しよう。',        type:'free',      target:0 },
+  { id:'free_3',  icon:'👀', text:'上を向いて歩いてみよう。
+いつもは見逃している看板や建物の上を観察しよう。',      type:'free',      target:0 },
+  { id:'free_4',  icon:'🎲', text:'次の交差点を「右」に曲がろう。
+その先に何があるか確かめてみよう。',              type:'free',      target:0 },
+  { id:'free_5',  icon:'🌆', text:'影が長くなる時間帯に外へ出てみよう。
+朝や夕方の街は違う顔を持っている。',        type:'free',      target:0 },
+];
+
+// ミッション状態管理
+let missionState = {
+  currentId:    null,
+  startSpots:   0,    // ミッション開始時の探索点数
+  startPins:    0,
+  startPhotos:  0,
+  cleared:      false,
+  collapsed:    true,
+};
+
+function initMission() {
+  // LocalStorageから前回のミッションを復元
+  try {
+    const saved = localStorage.getItem('fogmap_mission');
+    if (saved) missionState = { ...missionState, ...JSON.parse(saved) };
+  } catch(e) {}
+
+  if (!missionState.currentId) {
+    pickRandomMission();
+  } else {
+    renderMission();
+  }
+  // 探索・ピン・写真の更新時にミッション進捗を確認
+  setInterval(checkMissionProgress, 5000);
+}
+
+function saveMissionState() {
+  try { localStorage.setItem('fogmap_mission', JSON.stringify(missionState)); } catch(e) {}
+}
+
+function pickRandomMission() {
+  const m = MISSIONS[Math.floor(Math.random() * MISSIONS.length)];
+  missionState = {
+    currentId:   m.id,
+    startSpots:  revealedSpots.length,
+    startPins:   pins.length,
+    startPhotos: photos.length,
+    cleared:     false,
+    collapsed:   false,
+  };
+  saveMissionState();
+  renderMission();
+}
+
+function nextMission() {
+  pickRandomMission();
+}
+
+function getMission() {
+  return MISSIONS.find(m => m.id === missionState.currentId) || MISSIONS[0];
+}
+
+function calcProgress() {
+  const m = getMission();
+  const dSpots  = revealedSpots.length - missionState.startSpots;
+  const dPins   = pins.length    - missionState.startPins;
+  const dPhotos = photos.length  - missionState.startPhotos;
+
+  // 探索距離の概算（点数 × INTERPOLATE_M）
+  const distM   = Math.max(0, dSpots) * (typeof INTERPOLATE_M !== 'undefined' ? INTERPOLATE_M : DEDUP_M);
+
+  if (m.type === 'free')     return { ratio: 0, text: '自由ミッション', done: false };
+  if (m.type === 'distance') {
+    const r = Math.min(distM / m.target, 1);
+    return { ratio: r, text: `${Math.round(distM)}m / ${m.target}m`, done: r >= 1 };
+  }
+  if (m.type === 'pins') {
+    const r = Math.min(dPins / m.target, 1);
+    return { ratio: r, text: `${Math.max(0,dPins)} / ${m.target}個`, done: r >= 1 };
+  }
+  if (m.type === 'photos') {
+    const r = Math.min(dPhotos / m.target, 1);
+    return { ratio: r, text: `${Math.max(0,dPhotos)} / ${m.target}枚`, done: r >= 1 };
+  }
+  if (m.type === 'combo') {
+    const t = m.target;
+    const checks = [];
+    if (t.distance) checks.push(Math.min(distM / t.distance, 1));
+    if (t.pins)     checks.push(Math.min(Math.max(0,dPins) / t.pins, 1));
+    if (t.photos)   checks.push(Math.min(Math.max(0,dPhotos) / t.photos, 1));
+    const r = checks.reduce((a,b)=>a+b,0) / checks.length;
+    const parts = [];
+    if (t.distance) parts.push(`${Math.round(distM)}/${t.distance}m`);
+    if (t.pins)     parts.push(`ピン${Math.max(0,dPins)}/${t.pins}`);
+    if (t.photos)   parts.push(`写真${Math.max(0,dPhotos)}/${t.photos}`);
+    return { ratio: Math.min(r,1), text: parts.join(' · '), done: r >= 1 };
+  }
+  return { ratio: 0, text: '', done: false };
+}
+
+function renderMission() {
+  const m    = getMission();
+  const prog = calcProgress();
+
+  document.getElementById('mission-icon').textContent  = m.icon;
+  document.getElementById('mission-text').textContent  = m.text;
+  document.getElementById('mission-progress-bar').style.width = (prog.ratio * 100) + '%';
+  document.getElementById('mission-progress-text').textContent = m.type === 'free' ? '－' : Math.round(prog.ratio * 100) + '%';
+
+  const progWrap = document.getElementById('mission-progress-wrap');
+  progWrap.style.display = m.type === 'free' ? 'none' : 'flex';
+
+  const clearBtn    = document.getElementById('mission-clear');
+  const clearBanner = document.getElementById('mission-clear-banner');
+
+  if (prog.done && !missionState.cleared) {
+    missionState.cleared = true;
+    saveMissionState();
+    clearBanner.style.display = 'block';
+    clearBtn.style.display    = 'block';
+    // カードを開く
+    document.getElementById('mission-card').classList.remove('collapsed');
+    missionState.collapsed = false;
+  } else if (missionState.cleared) {
+    clearBanner.style.display = 'block';
+    clearBtn.style.display    = 'block';
+  } else {
+    clearBanner.style.display = 'none';
+    clearBtn.style.display    = 'none';
+  }
+
+  // 折りたたみ状態の復元
+  document.getElementById('mission-card').classList.toggle('collapsed', missionState.collapsed);
+}
+
+function checkMissionProgress() {
+  if (missionState.cleared) return;
+  renderMission();
+}
+
+function toggleMission() {
+  missionState.collapsed = !missionState.collapsed;
+  document.getElementById('mission-card').classList.toggle('collapsed', missionState.collapsed);
+  saveMissionState();
+}
+
+// ══════════════════════════════════════════
 //  BOOT
 // ══════════════════════════════════════════
 initMap();
+// ミッションはデータ読み込み後に初期化
+setTimeout(initMission, 1500);
 </script>
 </body>
 </html>
